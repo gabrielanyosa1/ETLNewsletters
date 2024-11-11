@@ -10,14 +10,15 @@ This project (Phase 1) is designed to develop a comprehensive email processing a
 
 - **Email Extraction and Filtering**: Extracts and filters emails based on specified criteria, handling large volumes of data while respecting Gmail API rate limits.
 - **Incremental Data Handling**: Manages incremental email updates to avoid duplicate entries in the dataset.
-- **Data Synchronization with MongoDB**: Synchronizes email data with a MongoDB collection, ensuring consistency between the JSON dataset and the database.
+- **Data Synchronization with MongoDB**: Synchronizes email data with a MongoDB collection, ensuring consistency between the JSON dataset and the database. Supports both Atlas Clusters and Community Edition. 
+    - **Local MongoDB Instance Provisioning**: Confirmed functionality to provision and connect to a local MongoDB instance via the Community Edition, with automatic syncing and database updates when running `sync_mongodb.py`. This ensures continuity even if the initial connection was to an Atlas cluster.
 - **Data Quality Analysis**: Verifies data quality in MongoDB, examining factors such as content length, top senders, daily distribution, and keyword analysis.
 - **Logging and Error Handling**: Implements robust logging to facilitate debugging and ensure traceability in case of errors or failed processes.
 
 ### Roadmap for Future Enhancements
 
 - **Topic Modeling and News Feed Integration**: Expand data collection by integrating with open-source news feeds and implementing topic modeling for in-depth content analysis.
-- **Local MongoDB Instance Provisioning**: Add functionality to provision and connect to a local MongoDB instance as a backup or alternative to cloud storage if space constraints arise.
+- **Future Support for DuckDb**: Plan to integrate DuckDB for fast analytical workloads, especially useful for feature stores and large dataframes, enabling more efficient handling of large datasets in future analytical expansions.
 - **Data Warehouse Creation**: Develop a structured data warehouse to store, manage, and query large datasets, including financial market and economic data.
 - **Advanced ML and Data Science Algorithms**: Implement advanced machine learning and data science models for market data analysis, including sentiment analysis, private markets insights, and equity forecasting.
 - **Visualization and Quantitative Analysis**: Incorporate visualization tools and quant analysis techniques for insights into private companies, macroeconomic trends, and various financial assets.
