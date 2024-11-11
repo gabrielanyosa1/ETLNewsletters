@@ -5,6 +5,7 @@ credentials.json
 gmail_filter.log
 gmail_processing_logs.json
 filtered_emails.json
+filter_senders.json
 
 # Ignore environment variables and API keys
 .env

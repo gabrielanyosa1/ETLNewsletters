@@ -31,22 +31,24 @@ logger = logging.getLogger(__name__)
 # Define the required access scopes
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 
-# List of sender email addresses to filter
-FILTER_SENDERS = [
-    'noreply@news.bloomberg.com',
-    'publishing@email.mckinsey.com',
-    'account@seekingalpha.com',
-    'subscriptions@seekingalpha.com',
-    'newsletters-noreply@linkedin.com',
-    'members@medium.com',
-    'noreply@medium.com',
-    'news@alphasignal.ai',
-    'squad@thedailyupside.com',
-    'therundownai@mail.beehiiv.com',
-    'bayareatimes@bayareatimes.com',
-    'hello@mindstream.news',
-    'hi@folow.it'
-]
+# Load the FILTER_SENDERS from the JSON file
+def load_filter_senders(filename="filter_senders.json"):
+    try:
+        with open(filename, "r") as f:
+            senders = json.load(f)
+            if not isinstance(senders, list):
+                raise ValueError("Expected a list of email addresses")
+            return senders
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse JSON in {filename}: {e}")
+    except FileNotFoundError:
+        logger.error(f"{filename} not found.")
+    except Exception as e:
+        logger.error(f"Unexpected error loading filter senders: {e}")
+    return []
+
+# Initialize FILTER_SENDERS
+FILTER_SENDERS = load_filter_senders()
 
 # Rate limiting constants
 CALLS_PER_SECOND = 2  # More conservative limit
