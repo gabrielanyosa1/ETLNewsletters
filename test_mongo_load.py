@@ -1,4 +1,3 @@
-# test_mongo_load.py
 import logging
 from mongo_loader import MongoDBLoader
 

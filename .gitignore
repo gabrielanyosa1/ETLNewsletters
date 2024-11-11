@@ -6,6 +6,7 @@ gmail_filter.log
 gmail_processing_logs.json
 filtered_emails.json
 filter_senders.json
+parsedgmail.py
 
 # Ignore environment variables and API keys
 .env
