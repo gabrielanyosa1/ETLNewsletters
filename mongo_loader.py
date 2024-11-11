@@ -78,6 +78,8 @@ class MongoDBLoader:
             
             logger.info(f"Successfully created indexes: {index_results}")
             logger.info(f"Collection stats: {self.db.command('collstats', collection_name)}")
+
+            return True
             
         except Exception as e:
             logger.error(f"Failed to initialize database: {str(e)}", exc_info=True)

@@ -139,6 +139,10 @@ class BackgroundProcessor:
                 raise Exception("Failed to connect to MongoDB")
                 
             try:
+                # Initialize database and collection
+                if not mongo_loader.initialize_database():  # Check the return value
+                    raise Exception("Failed to initialize database")
+                
                 # Get initial count
                 initial_count = mongo_loader.collection.count_documents({})
                 logger.info(f"Starting processing with {initial_count} existing documents")
@@ -166,7 +170,7 @@ class BackgroundProcessor:
                                 self.state.total_processed = current_count - initial_count
                                 
                                 # Check for notification/backup threshold
-                                if self.state.total_processed % 1000 == 0:
+                                if self.state.total_processed % self.NOTIFICATION_THRESHOLD == 0:
                                     self.send_progress_notification()
                                     self.create_backup()
                                     
@@ -206,7 +210,7 @@ class BackgroundProcessor:
             logger.error(f"Processing error: {e}", exc_info=True)
             self.send_error_notification(str(e))
             raise
-            
+
     def verify_processing(self) -> bool:
         """Verify processing status and completion."""
         try:
