@@ -16,6 +16,7 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from bs4 import BeautifulSoup
+from mongo_loader import MongoDBLoader
 
 # Setup logging configuration with DEBUG level
 logging.basicConfig(
@@ -622,6 +623,27 @@ def main():
                 
             logger.info(f"Successfully saved {len(filtered_emails)} filtered emails and logs")
             logger.info(f"Process completed. Stats: {logs['stats']}")
+
+            # Initializa MongoDB Loader 
+            logger.info("Starting MongoDB import process")
+            loader = MongoDBLoader()
+            if loader.connect():
+                mongo_stats = loader.load_emails("filtered_emails.json")
+                logger.info(f"MongoDB import completed. Stats: {mongo_stats}")
+            else:
+                logger.error("Failed to connect to MongoDB")
+            loader.close()
+
+        except Exception as e:
+            error_msg = f"Failed to save results or load to MongoDb: {str(e)}"
+            logs["errors"].append({
+                "time": datetime.now().isoformat(),
+                "type": "save_error",
+                "message": error_msg
+            })
+            # Try to save logs even if results have failed
+            with open('gmail_processing_logs.json', 'w', encoding= 'utf-8') as logfile:
+                json.dumps(logs, logfile, indent=4, ensure_ascii= False)
             
         except Exception as e:
             error_msg = f"Failed to save results: {str(e)}"
