@@ -17,6 +17,9 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from bs4 import BeautifulSoup
 from mongo_loader import MongoDBLoader
+from incremental_email_handler import IncrementalEmailHandler
+from typing import Dict
+
 
 # Setup logging configuration with DEBUG level
 logging.basicConfig(
@@ -53,7 +56,7 @@ FILTER_SENDERS = load_filter_senders()
 
 # Rate limiting constants
 CALLS_PER_SECOND = 2  # More conservative limit
-CUTOFF_DATE = datetime(2024, 11, 7, tzinfo=timezone.utc)
+CUTOFF_DATE = datetime(2024, 11, 5, tzinfo=timezone.utc)
 PAGE_SIZE = 50  # Smaller batch size
 BATCH_DELAY = 1  # Delay between batches in seconds
 
@@ -170,6 +173,46 @@ class GmailRateLimiter:
             logger.error(f"Error getting message {msg_id}: {e}")
             raise
 
+def construct_date_query(cutoff_date: datetime, date_range: Dict) -> str:
+    """
+    Construct Gmail query based on date ranges.
+
+    Args:
+        cutoff_date: The earliest date to fetch emails from
+        date_range: Dictionary containing 'earliest' and 'latest' dates from existing data
+
+    Returns:
+        str: Gmail query string for date filtering
+    """
+    base_query = 'category:primary OR category:updates'
+    current_time = datetime.now(timezone.utc)
+
+    # Format current time for query
+    current_str = current_time.strftime('%Y/%m/%d %H:%M:%S')  # Include time
+
+    # Determine search direction based on cutoff date and latest existing email
+    if date_range and date_range.get('latest'):
+        latest_existing = datetime.fromisoformat(date_range['latest'].replace('Z', '+00:00'))
+        if cutoff_date < latest_existing:
+            # Search for older emails
+            cutoff_str = cutoff_date.strftime('%Y/%m/%d')
+            earliest_str = latest_existing.strftime('%Y/%m/%d')  # Use latest_existing for the upper bound
+            date_query = f" after:{cutoff_str} before:{earliest_str}"
+            logger.info(f"Searching for historical emails{date_query}")
+            return f"{base_query}{date_query}"
+        else:
+            # Search for newer emails
+            latest_str = latest_existing.strftime('%Y/%m/%d %H:%M:%S')  # Include time
+            date_query = f" after:{latest_str} before:{current_str}"
+            logger.info(f"Searching for new emails{date_query}")
+            return f"{base_query}{date_query}"
+    else:
+        # No existing data, search from cutoff to now
+        cutoff_str = cutoff_date.strftime('%Y/%m/%d')
+        date_query = f" after:{cutoff_str} before:{current_str}"
+        logger.info(f"No existing date range. Searching from {cutoff_str} to {current_str}")
+        return f"{base_query}{date_query}"
+    
 def safe_base64_decode(data):
     """Safely decode base64 data, handling padding and non-ASCII characters."""
     try:
@@ -279,7 +322,7 @@ def parse_date(date_str):
         # Common timezone mappings
         tz_mappings = {
             'UTC': '+0000',
-            'GMT': '+0000',  # Added GMT mapping
+            'GMT': '+0000',
             'EST': '-0500',
             'EDT': '-0400',
             'CST': '-0600',
@@ -454,31 +497,47 @@ def process_message(gmail_limiter, message):
         return None
     
 def main():
-    """Main function with proper cutoff handling and logging."""
+    """Main function with proper cutoff handling, logging, and date range updates."""
     logger.info(f"Starting Gmail filtering process with cutoff date: {CUTOFF_DATE.isoformat()}")
     
-    # Initialize tracking variables and logs
-    processed_ids = set()
+    # Initialize handlers and get stats
+    email_handler = IncrementalEmailHandler()
+    stats = email_handler.get_statistics()
+    logger.info(f"Current collection has {stats['total_emails']} emails")
+
+    # Handle date range
+    date_range = stats.get('date_range', {})
+    if date_range and date_range.get('earliest') and date_range.get('latest'):
+        earliest_existing = datetime.fromisoformat(date_range['earliest'].replace('Z', '+00:00'))
+        latest_existing = datetime.fromisoformat(date_range['latest'].replace('Z', '+00:00'))
+        logger.info(f"Found existing emails from {earliest_existing} to {latest_existing}")
+    
+    # Initialize tracking variables
+    processed_ids = email_handler.existing_ids.copy()
     filtered_emails = []
     total_processed = 0
     cutoff_reached = False
     consecutive_old_messages = 0
-    MAX_OLD_MESSAGES = 5  # Stop after seeing this many consecutive old messages
+    MAX_OLD_MESSAGES = 5
     
+    # Set up logs
     logs = {
         "start_time": datetime.now().isoformat(),
         "cutoff_date": CUTOFF_DATE.isoformat(),
+        "existing_date_range": date_range,
         "processed_messages": [],
         "stats": {
             "total_processed": 0,
             "successful": 0,
             "skipped": 0,
-            "errors": 0
+            "errors": 0,
+            "direction": "backward" if (date_range and CUTOFF_DATE < datetime.fromisoformat(date_range['earliest'].replace('Z', '+00:00'))) else "forward"
         },
         "errors": []
     }
     
     try:
+
         # Handle credentials
         creds = None
         if os.path.exists('token.pickle'):
@@ -505,8 +564,10 @@ def main():
         service = build('gmail', 'v1', credentials=creds)
         gmail_limiter = GmailRateLimiter(service)
         
-        # Process messages
-        query = 'category:primary OR category:updates'
+        # Construct query only once
+        query = construct_date_query(CUTOFF_DATE, date_range)
+        logger.info(f"Using query: {query}")
+
         page_token = None
         
         while not cutoff_reached:
@@ -606,47 +667,88 @@ def main():
                 time.sleep(1)
                 continue
                 
-        # Update final stats and save results
+        # Update final stats
         logs["stats"]["total_processed"] = total_processed
         logs["end_time"] = datetime.now().isoformat()
                 
         try:
-            # Save filtered emails
-            logger.info(f"Saving {len(filtered_emails)} filtered emails to JSON")
-            with open('filtered_emails.json', 'w', encoding='utf-8') as outfile:
-                json.dump(filtered_emails, outfile, indent=4, ensure_ascii=False)
+            if filtered_emails:
+                logger.info(f"Processing {len(filtered_emails)} new emails")
+                if logs["stats"]["direction"] == "backward":
+                    logger.info("Adding historical emails to collection")
+                else:
+                    logger.info("Adding new emails to collection")
+                    
+                merged_emails = email_handler.process_new_emails(filtered_emails)
+                logger.info(f"Total emails after merge: {len(merged_emails)}")
+                
+                # Update MongoDB with new emails only
+                logger.info("Starting MongoDB import process")
+                mongo_loader = MongoDBLoader()
+                if mongo_loader.connect():
+                    # Get MongoDB stats before update
+                    before_stats = mongo_loader.get_collection_stats()
+                    logger.info(f"MongoDB before update: {before_stats['total_documents']} documents")
+                    
+                    # Import new emails
+                    mongo_stats = mongo_loader.load_data(filtered_emails)
+                    logger.info(f"MongoDB import completed. Stats: {mongo_stats}")
+                    
+                    # Get MongoDB stats after update
+                    after_stats = mongo_loader.get_collection_stats()
+                    logger.info(f"MongoDB after update: {after_stats['total_documents']} documents")
+                    
+                    # Verify the changes
+                    if after_stats['total_documents'] > before_stats['total_documents']:
+                        logger.info(f"Successfully added {after_stats['total_documents'] - before_stats['total_documents']} new documents to MongoDB")
+                    else:
+                        logger.warning("No new documents were added to MongoDB")
+                    
+                    # Add MongoDB stats to logs
+                    logs["stats"]["mongodb"] = {
+                        "import_stats": mongo_stats,
+                        "before_count": before_stats['total_documents'],
+                        "after_count": after_stats['total_documents']
+                    }
+                else:
+                    logger.error("Failed to connect to MongoDB")
+                mongo_loader.close()
+
+                # Add detailed merge information
+                logs["merge_info"] = {
+                    "direction": logs["stats"]["direction"],
+                    "pre_merge_count": len(merged_emails) - len(filtered_emails),
+                    "new_emails_count": len(filtered_emails),
+                    "post_merge_count": len(merged_emails),
+                    "merge_time": datetime.now().isoformat()
+                }
+            else:
+                logger.info("No new emails to process")
                 
             # Save processing logs
             logger.info("Saving processing logs")
             with open('gmail_processing_logs.json', 'w', encoding='utf-8') as logfile:
                 json.dump(logs, logfile, indent=4, ensure_ascii=False)
                 
-            logger.info(f"Successfully saved {len(filtered_emails)} filtered emails and logs")
             logger.info(f"Process completed. Stats: {logs['stats']}")
-
-            # Initializa MongoDB Loader 
-            logger.info("Starting MongoDB import process")
-            loader = MongoDBLoader()
-            if loader.connect():
-                mongo_stats = loader.load_emails("filtered_emails.json")
-                logger.info(f"MongoDB import completed. Stats: {mongo_stats}")
-            else:
-                logger.error("Failed to connect to MongoDB")
-            loader.close()
-
-        except Exception as e:
-            error_msg = f"Failed to save results or load to MongoDb: {str(e)}"
-            logs["errors"].append({
-                "time": datetime.now().isoformat(),
-                "type": "save_error",
-                "message": error_msg
-            })
-            # Try to save logs even if results have failed
-            with open('gmail_processing_logs.json', 'w', encoding= 'utf-8') as logfile:
-                json.dumps(logs, logfile, indent=4, ensure_ascii= False)
+            
+            # Show final statistics
+            final_stats = email_handler.get_statistics()
+            logger.info("\nFinal collection statistics:")
+            logger.info(f"Total emails: {final_stats['total_emails']}")
+            if final_stats['date_range']:
+                logger.info(f"Date range: {final_stats['date_range']['earliest']} to {final_stats['date_range']['latest']}")
+            if "merge_info" in logs:
+                logger.info("\nMerge statistics:")
+                logger.info(f"Emails before merge: {logs['merge_info']['pre_merge_count']}")
+                logger.info(f"New emails added: {logs['merge_info']['new_emails_count']}")
+                logger.info(f"Total after merge: {logs['merge_info']['post_merge_count']}")
+            logger.info("Top senders:")
+            for sender, count in final_stats['senders'].items():
+                logger.info(f"  {sender}: {count} emails")
             
         except Exception as e:
-            error_msg = f"Failed to save results: {str(e)}"
+            error_msg = f"Failed to save results or load to MongoDB: {str(e)}"
             logger.error(error_msg, exc_info=True)
             logs["errors"].append({
                 "time": datetime.now().isoformat(),
