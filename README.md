@@ -40,8 +40,8 @@ This project (Phase 1) is designed to develop a comprehensive email processing a
 
 1. **Clone the repository**:
    ```bash
-   git clone <repository-url>
-   cd <repository-directory>
+   git clone https://github.com/gabrielanyosa1/ETLNewsletters
+   cd ~/ETLNewsletters
    ```
 
 2. **Environment Configuration**:
