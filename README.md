@@ -171,9 +171,7 @@ This project is under active development, with several key features planned for 
    - Develop interactive dashboards and visualizations to provide insights into market trends, top-performing sectors, and sentiment shifts.
    - Use libraries like `matplotlib`, `Plotly`, or `D3.js` to create engaging and informative data visualizations.
 
-6. **Enhanced
-
- Data Governance and Security**
+6. **Enhanced Data Governance and Security**
    - Implement stricter data governance protocols to ensure the security and integrity of the email and market data.
    - Explore options for data encryption, user authentication, and audit logging to safeguard sensitive information.
 
