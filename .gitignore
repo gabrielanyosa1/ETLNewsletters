@@ -10,6 +10,18 @@ parsedgmail.py
 test_mongo_load.py
 gmailproject.code-workspace
 
+# Background processing files
+background_processor.log
+processing_checkpoint.json
+backups/
+.DS_Store
+parsegmail.py
+test_*.py
+
+# Make sure MongoDB backup files are ignored
+*.bson
+*.mongodb
+
 # Ignore environment variables and API keys
 .env
 *.env
