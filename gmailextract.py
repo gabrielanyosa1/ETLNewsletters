@@ -56,7 +56,7 @@ FILTER_SENDERS = load_filter_senders()
 
 # Rate limiting constants
 CALLS_PER_SECOND = 2  # More conservative limit
-CUTOFF_DATE = datetime(2024, 2, 5, tzinfo=timezone.utc)
+CUTOFF_DATE = datetime(2024, 9, 20, tzinfo=timezone.utc)
 PAGE_SIZE = 50  # Smaller batch size
 BATCH_DELAY = 1  # Delay between batches in seconds
 

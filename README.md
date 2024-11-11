@@ -8,10 +8,13 @@ This project (Phase 1) is designed to develop a comprehensive email processing a
 
 ### Key Functionalities
 
+- **Background Email Processing**: Continuous email processing with sleep prevention, automated backups, and progress notifications.
 - **Email Extraction and Filtering**: Extracts and filters emails based on specified criteria, handling large volumes of data while respecting Gmail API rate limits.
 - **Incremental Data Handling**: Manages incremental email updates to avoid duplicate entries in the dataset.
 - **Data Synchronization with MongoDB**: Synchronizes email data with a MongoDB collection, ensuring consistency between the JSON dataset and the database. Supports both Atlas Clusters and Community Edition. 
-    - **Local MongoDB Instance Provisioning**: Confirmed functionality to provision and connect to a local MongoDB instance via the Community Edition, with automatic syncing and database updates when running `sync_mongodb.py`. This ensures continuity even if the initial connection was to an Atlas cluster.
+    - **Local MongoDB Instance Provisioning**: Confirmed functionality to provision and connect to a local MongoDB instance via the Community Edition, with automatic syncing and database updates.
+- **Progress Tracking and Notifications**: Real-time progress tracking with email notifications and automated backups every 1000 documents.
+- **Sleep Prevention**: Keeps system active during long-running processes using native macOS capabilities.
 - **Data Quality Analysis**: Verifies data quality in MongoDB, examining factors such as content length, top senders, daily distribution, and keyword analysis.
 - **Logging and Error Handling**: Implements robust logging to facilitate debugging and ensure traceability in case of errors or failed processes.
 
@@ -47,8 +50,20 @@ This project (Phase 1) is designed to develop a comprehensive email processing a
 
 2. **Environment Configuration**:
    - Make sure to set up your Gmail API credentials (`credentials.json`) and place it in the project root.
-   - Ensure MongoDB is accessible by configuring your `.env` file or setting the `MONGODB_URI` environment variable.
-   - This project assumes a cloud MongoDB instance, though future updates will include options for a local instance.
+   - Create and configure your `.env` file:
+     ```env
+     MONGODB_URI=your_mongodb_uri
+     GMAIL_USER=your_gmail_address
+     GMAIL_APP_PASSWORD=your_app_specific_password
+     NOTIFICATION_EMAIL=your_notification_email
+     ```
+      - Ensure MongoDB is accessible by configuring your `.env` file or setting the `MONGODB_URI` environment variable.
+   - Configure MongoDB connection (supports local or cloud)
+
+3. **System Requirements**:
+   - Python 3.12+
+   - MongoDB (local or cloud)
+   - MacOS (for native sleep prevention)
 
 > **Note**: Detailed requirements and dependencies will be included in `requirements.txt` in future updates as the project evolves.
 
@@ -56,95 +71,160 @@ This project (Phase 1) is designed to develop a comprehensive email processing a
 
 ## Usage
 
-1. **Initialize Email Processing**:
-   Run the main email extraction script to fetch and process emails from Gmail.
+1. **Test System Components**:
    ```bash
-   python gmail_extract.py
+   python system_test.py
    ```
-   
-2. **Verify Data Consistency**:
-   Use the verification script to ensure consistency between JSON and MongoDB datasets.
+   Verifies:
+   - Environment variables
+   - MongoDB connection
+   - Email notifications
+   - Sleep prevention
+   - Backup system
+
+2. **Start Background Processing**:
+   ```bash
+   python background_processor.py
+   ```
+   Features:
+   - Progress tracking with tqdm
+   - Email notifications every 1000 documents
+   - Automatic backups every 30 minutes
+   - Sleep prevention
+   - Checkpointing for resume capability
+
+3. **Verify Data Consistency**:
    ```bash
    python verify_state.py
    ```
-   
-3. **Sync Data with MongoDB**:
-   Synchronize the JSON dataset with MongoDB, ensuring only missing entries are added to the database.
+
+4. **Sync Data with MongoDB**:
    ```bash
    python sync_mongodb.py
    ```
 
-4. **Verify MongoDB Data Quality**:
-   Run the data quality verification script to analyze the MongoDB collection for completeness and accuracy.
+5. **Verify MongoDB Data Quality**:
    ```bash
    python verify_mongo_data.py
    ```
+
 
 ---
 
 ## Project Structure
 
 ```
-├── gmail_extract.py             # Main script for email extraction, filtering, and processing.
-├── incremental_email_handler.py # Handles incremental email updates to avoid duplicates.
-├── sync_mongodb.py              # Synchronizes MongoDB collection with the JSON dataset.
-├── verify_state.py              # Verifies consistency between JSON and MongoDB data.
-├── verify_mongo_data.py         # Conducts data quality analysis on MongoDB data.
-├── mongo_loader.py              # Manages MongoDB connection, data loading, and collection statistics.
-├── .env                         # Environment variables, including MongoDB URI.
-├── credentials.json             # Gmail API credentials (should be kept secure).
-├── README.md                    # Comprehensive documentation of the project.
-└── ...                          # Additional configuration and log files.
+├── background_processor.py      # Background processing with progress tracking
+├── system_test.py              # System component testing
+├── gmail_extract.py            # Main email extraction and processing
+├── incremental_email_handler.py # Incremental update handling
+├── sync_mongodb.py             # MongoDB synchronization
+├── verify_state.py             # Data consistency verification
+├── verify_mongo_data.py        # MongoDB data quality analysis
+├── mongo_loader.py             # MongoDB connection management
+├── .env                        # Environment configuration
+├── credentials.json            # Gmail API credentials
+├── README.md                   # Project documentation
+└── backups/                    # Automated backup storage
 ```
 
 ### Key Files and Modules
 
-- **`gmail_extract.py`**: This is the main email extraction script. It connects to Gmail API, fetches emails, filters based on defined criteria, and processes email bodies. The script includes detailed logging, error handling, and rate limiting to manage Gmail API requests efficiently.
-  
-- **`incremental_email_handler.py`**: This module handles incremental updates, ensuring that new emails are merged with the existing dataset without creating duplicates. It also backs up the JSON file before updating and provides dataset statistics for easy monitoring.
-  
-- **`sync_mongodb.py`**: This script synchronizes the MongoDB collection with the JSON dataset, ensuring that only missing documents are added. This reduces redundant data storage in MongoDB and improves consistency.
-  
-- **`verify_state.py`**: This script verifies consistency between the JSON file and MongoDB, highlighting any discrepancies in document counts or email IDs.
-  
-- **`verify_mongo_data.py`**: This module performs a thorough analysis of the MongoDB data, including daily email distribution, top senders, content length, and subject keyword analysis. It helps to monitor data quality and identify issues such as missing fields or duplicate entries.
-  
-- **`mongo_loader.py`**: This module encapsulates MongoDB connection handling, data insertion, and index creation. It supports batch processing, error handling, and collection statistics retrieval. This will also be extended in future versions to support local MongoDB instance provisioning.
+- **`background_processor.py`**: Manages continuous email processing with progress tracking, notifications, and automated backups. Features sleep prevention for long-running processes and checkpoint management.
+
+- **`system_test.py`**: Tests core system components including MongoDB connection, email notifications, sleep prevention, and backup functionality.
+
+- **`gmail_extract.py`**: Main email extraction script connecting to Gmail API, with rate limiting and error handling.
+
+- **`incremental_email_handler.py`**: Handles incremental updates, avoiding duplicates and managing backups.
+
+- **`sync_mongodb.py`**: Synchronizes MongoDB collection with JSON dataset, minimizing redundant storage.
+
+- **`verify_state.py`**: Verifies data consistency between JSON and MongoDB.
+
+- **`verify_mongo_data.py`**: Analyzes MongoDB data quality and provides statistics.
+
+- **`mongo_loader.py`**: Manages MongoDB connections, data loading, and indexing.
 
 ---
 
 ## Functionality Overview
 
-### 1. **Email Extraction and Filtering**
+### 1. **Background Processing System**
 
-   - **Process Overview**: The `gmail_extract.py` script connects to Gmail API, retrieves emails based on predefined criteria, decodes and cleans the email content, and stores the processed emails in JSON format.
-   - **Rate Limiting and Error Handling**: Implements exponential backoff and rate limiting to respect Gmail API limits. Comprehensive error handling ensures that the process can continue despite intermittent API issues.
+   - **Continuous Operation**: Runs continuously with sleep prevention
+   - **Progress Tracking**: Real-time progress with tqdm
+   - **Notifications**: Email updates every 1000 documents
+   - **Automated Backups**: Regular backups every 30 minutes
+   - **Checkpointing**: Resume capability after interruptions
 
-### 2. **Incremental Email Handling**
+### 2. **Email Extraction and Processing**
 
-   - **Duplicate Avoidance**: The `incremental_email_handler.py` module tracks existing email IDs and merges new emails while avoiding duplicates.
-   - **Data Backup**: Creates backups of the JSON file before each update to safeguard against data loss.
-   - **Statistics**: Provides statistics on the total number of emails, date range, and top senders.
+   - **Gmail API Integration**: Fetches emails with rate limiting
+   - **Content Processing**: Decodes and cleans email content
+   - **Filtering**: Applies criteria to select relevant emails
 
-### 3. **MongoDB Synchronization**
+### 3. **Data Management**
 
-   - **Data Sync**: The `sync_mongodb.py` script ensures MongoDB and JSON datasets are in sync. It identifies and inserts only missing emails to minimize storage redundancy.
-   - **Logging and Monitoring**: Detailed logs provide insights into the number of documents inserted, skipped, or failed during the synchronization process.
+   - **Incremental Updates**: Avoids duplicates in dataset
+   - **MongoDB Sync**: Maintains consistency across storage
+   - **Backup System**: Regular automated backups
+   - **Data Quality**: Continuous verification and analysis
 
-### 4. **Data Quality Verification**
+### 4. **System Monitoring**
 
-   - **Consistency Checks**: The `verify_state.py` script compares JSON and MongoDB data to identify discrepancies in email counts or IDs, highlighting potential issues with data integrity.
-   - **Detailed Analysis**: The `verify_mongo_data.py` script conducts a thorough analysis of MongoDB data, including:
-     - **Daily Distribution**: Tracks email counts by date.
-     - **Top Senders**: Identifies the most frequent email senders.
-     - **Content Statistics**: Analyzes content length and URL counts.
-     - **Keyword Analysis**: Extracts and ranks keywords from email subjects.
+   - **Progress Tracking**: Visual progress indicators
+   - **Email Notifications**: Regular status updates
+   - **Error Handling**: Comprehensive error capture
+   - **Logging**: Detailed activity logging
 
-### 5. **MongoDB Connection and Data Loading**
+---
 
-   - **Connection Management**: The `mongo_loader.py` module handles MongoDB connections, including error handling and automatic retries for reliable database access.
-   - **Batch Processing**: Supports batch loading of email data, with duplicate handling and failure recovery to ensure smooth data ingestion.
-   - **Indexing**: Automatically creates indexes for efficient querying and retrieval of large datasets.
+## Configuration
+
+### Background Processor Settings
+
+```python
+class BackgroundProcessor:
+    NOTIFICATION_THRESHOLD = 1000  # emails
+    BACKUP_INTERVAL = 1800        # seconds (30 minutes)
+```
+
+### MongoDB Configuration
+
+- Database: gmail_archive
+- Collection: emails
+- Indexes:
+  - id (unique)
+  - parsedDate (sorted)
+  - from
+  - subject
+
+### Email Processing
+
+- Rate Limiting: 2 calls per second
+- Batch Size: 50 emails
+- Automatic retries with exponential backoff
+
+---
+
+## Development Notes
+
+### Testing
+
+- Run system tests before processing:
+  ```bash
+  python system_test.py
+  ```
+- Monitor logs in `background_processor.log`
+- Check MongoDB stats regularly
+
+### Best Practices
+
+- Keep Gmail API credentials secure
+- Regular backup verification
+- Monitor system resources
+- Check logs for errors
 
 ---
 
