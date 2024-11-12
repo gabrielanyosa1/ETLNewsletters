@@ -59,6 +59,7 @@ This project (Phase 1) is designed to develop a comprehensive email processing a
      ```
       - Ensure MongoDB is accessible by configuring your `.env` file or setting the `MONGODB_URI` environment variable.
    - Configure MongoDB connection (supports local or cloud)
+   - Create a (`filter_senders.json`) with the desired sender email addresses to fetch emails from.
 
 3. **System Requirements**:
    - Python 3.12+
