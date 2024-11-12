@@ -56,7 +56,7 @@ FILTER_SENDERS = load_filter_senders()
 
 # Rate limiting constants
 CALLS_PER_SECOND = 2  # More conservative limit
-CUTOFF_DATE = datetime(2024, 9, 20, tzinfo=timezone.utc)
+CUTOFF_DATE = datetime(2024, 11, 10, tzinfo=timezone.utc)
 PAGE_SIZE = 50  # Smaller batch size
 BATCH_DELAY = 1  # Delay between batches in seconds
 
@@ -175,43 +175,54 @@ class GmailRateLimiter:
 
 def construct_date_query(cutoff_date: datetime, date_range: Dict) -> str:
     """
-    Construct Gmail query based on date ranges.
-
-    Args:
-        cutoff_date: The earliest date to fetch emails from
-        date_range: Dictionary containing 'earliest' and 'latest' dates from existing data
-
-    Returns:
-        str: Gmail query string for date filtering
+    Construct Gmail query based on date ranges, using Gmail's supported date format.
     """
     base_query = 'category:primary OR category:updates'
+    
+    # Ensure we're using UTC
     current_time = datetime.now(timezone.utc)
+    logger.debug(f"Current UTC time: {current_time.isoformat()}")
 
-    # Format current time for query
-    current_str = current_time.strftime('%Y/%m/%d %H:%M:%S')  # Include time
-
-    # Determine search direction based on cutoff date and latest existing email
     if date_range and date_range.get('latest'):
+        # Convert latest_existing to UTC if it isn't already
         latest_existing = datetime.fromisoformat(date_range['latest'].replace('Z', '+00:00'))
-        if cutoff_date < latest_existing:
-            # Search for older emails
-            cutoff_str = cutoff_date.strftime('%Y/%m/%d')
-            earliest_str = latest_existing.strftime('%Y/%m/%d')  # Use latest_existing for the upper bound
-            date_query = f" after:{cutoff_str} before:{earliest_str}"
-            logger.info(f"Searching for historical emails{date_query}")
-            return f"{base_query}{date_query}"
+        if not latest_existing.tzinfo:
+            latest_existing = latest_existing.replace(tzinfo=timezone.utc)
         else:
-            # Search for newer emails
-            latest_str = latest_existing.strftime('%Y/%m/%d %H:%M:%S')  # Include time
-            date_query = f" after:{latest_str} before:{current_str}"
-            logger.info(f"Searching for new emails{date_query}")
-            return f"{base_query}{date_query}"
+            latest_existing = latest_existing.astimezone(timezone.utc)
+
+        # Convert cutoff_date to UTC if it isn't already
+        cutoff_utc = cutoff_date if cutoff_date.tzinfo else cutoff_date.replace(tzinfo=timezone.utc)
+        
+        logger.debug(f"Latest existing (UTC): {latest_existing.isoformat()}")
+        logger.debug(f"Cutoff date (UTC): {cutoff_utc.isoformat()}")
+        logger.debug(f"Current time (UTC): {current_time.isoformat()}")
+
+        if latest_existing >= cutoff_utc:
+            # Search forward for newer emails
+            # Use the day before latest_existing to ensure we don't miss any emails
+            query_start_date = (latest_existing - timedelta(days=1)).strftime('%Y/%m/%d')
+            query_end_date = (current_time + timedelta(days=1)).strftime('%Y/%m/%d')
+            
+            date_query = f' after:{query_start_date} before:{query_end_date}'
+            logger.info(f"Searching forward for new emails{date_query}")
+            logger.debug(f"Will filter messages after: {latest_existing.isoformat()}")
+        else:
+            # Search backwards for historical emails
+            cutoff_str = cutoff_utc.strftime('%Y/%m/%d')
+            earliest_str = latest_existing.strftime('%Y/%m/%d')
+            date_query = f' after:{cutoff_str} before:{earliest_str}'
+            logger.info(f"Searching backwards for historical emails{date_query}")
     else:
         # No existing data, search from cutoff to now
         cutoff_str = cutoff_date.strftime('%Y/%m/%d')
-        date_query = f" after:{cutoff_str} before:{current_str}"
+        current_str = (current_time + timedelta(days=1)).strftime('%Y/%m/%d')
+        date_query = f' after:{cutoff_str} before:{current_str}'
         logger.info(f"No existing date range. Searching from {cutoff_str} to {current_str}")
-        return f"{base_query}{date_query}"
+
+    query = f"{base_query}{date_query}"
+    logger.debug(f"Final query: {query}")
+    return query
     
 def safe_base64_decode(data):
     """Safely decode base64 data, handling padding and non-ASCII characters."""
@@ -312,7 +323,7 @@ def decode_and_extract_text(encoded_body):
         return EmailCleaner.structure_email_body("")
 
 def parse_date(date_str):
-    """Parse date string with comprehensive timezone handling."""
+    """Parse date string with comprehensive timezone handling and UTC conversion."""
     if not date_str:
         raise ValueError("Empty date string")
         
@@ -328,7 +339,9 @@ def parse_date(date_str):
             'CST': '-0600',
             'CDT': '-0500',
             'PST': '-0800',
-            'PDT': '-0700'
+            'PDT': '-0700',
+            'CET': '+0100',  # Added Central European Time
+            'CEST': '+0200'  # Added Central European Summer Time
         }
         
         # Step 1: Clean up parenthetical timezone info
@@ -350,7 +363,12 @@ def parse_date(date_str):
         # Step 3: Split into date and timezone parts
         try:
             # Try to parse with timezone directly first
-            return datetime.strptime(main_part, "%a, %d %b %Y %H:%M:%S %z")
+            parsed_dt = datetime.strptime(main_part, "%a, %d %b %Y %H:%M:%S %z")
+            logger.debug(f"Parsed with timezone directly: {parsed_dt.isoformat()}")
+            # Convert to UTC and return
+            utc_dt = parsed_dt.astimezone(timezone.utc)
+            logger.debug(f"Converted to UTC: {utc_dt.isoformat()}")
+            return utc_dt
         except ValueError:
             pass
             
@@ -401,9 +419,13 @@ def parse_date(date_str):
             
             # Create timezone-aware datetime
             tz = timezone(offset)
-            result = base_dt.replace(tzinfo=tz)
-            logger.debug(f"Final datetime: {result}")
-            return result
+            local_dt = base_dt.replace(tzinfo=tz)
+            logger.debug(f"Local datetime: {local_dt.isoformat()}")
+            
+            # Convert to UTC
+            utc_dt = local_dt.astimezone(timezone.utc)
+            logger.debug(f"Converted to UTC: {utc_dt.isoformat()}")
+            return utc_dt
             
         except Exception as e:
             logger.error(f"Failed to process timezone: {str(e)}")
@@ -413,8 +435,8 @@ def parse_date(date_str):
         logger.error(f"Date parsing failed for {date_str!r}: {str(e)}")
         raise
 
-def process_message(gmail_limiter, message):
-    """Process a single message with improved error handling and cutoff date check."""
+def process_message(gmail_limiter, message, date_range=None):
+    """Process a single message with improved timezone handling."""
     try:
         msg = gmail_limiter.get_message(message['id'])
         payload = msg.get('payload', {})
@@ -432,16 +454,35 @@ def process_message(gmail_limiter, message):
         msg_date = None
         if date:
             try:
-                msg_date = parse_date(date)
-                # Early return if message is before cutoff date
-                if msg_date < CUTOFF_DATE:
-                    logger.debug(f"Message {message['id']} is before cutoff date, skipping")
-                    return {'status': 'cutoff', 'date': msg_date}
+                msg_date = parse_date(date)  # Will return UTC
+                logger.debug(f"Parsed message date (UTC): {msg_date.isoformat()}")
+
+                # Ensure CUTOFF_DATE is in UTC
+                cutoff_utc = CUTOFF_DATE if CUTOFF_DATE.tzinfo else CUTOFF_DATE.replace(tzinfo=timezone.utc)
+
+                # When searching forward, check if message is newer than latest existing
+                if date_range and date_range.get('latest'):
+                    latest_existing = datetime.fromisoformat(date_range['latest'].replace('Z', '+00:00'))
+                    if not latest_existing.tzinfo:
+                        latest_existing = latest_existing.replace(tzinfo=timezone.utc)
+                    else:
+                        latest_existing = latest_existing.astimezone(timezone.utc)
+                        
+                    # If searching forward, skip messages we already have
+                    if latest_existing >= cutoff_utc and msg_date <= latest_existing:
+                        logger.debug(f"Skipping message {message['id']} as it's not newer than latest existing")
+                        return None
+                    # If searching backward, skip messages before cutoff
+                    elif latest_existing < cutoff_utc and msg_date < cutoff_utc:
+                        logger.debug(f"Message {message['id']} is before cutoff date while searching backwards")
+                        return {'status': 'cutoff', 'date': msg_date}
+                    
             except ValueError as e:
                 logger.warning(f"Date parsing issue for message {message['id']}: {e}")
             except Exception as e:
                 logger.error(f"Unexpected error parsing date: {e}", exc_info=True)
-        
+
+
         # Filter based on sender
         if not any(email in (sender or '') for email in FILTER_SENDERS):
             logger.debug(f"Sender {sender} not in filter list, skipping")
@@ -588,8 +629,8 @@ def main():
                             logs["stats"]["skipped"] += 1
                             continue
                             
-                        # Process message
-                        processed_message = process_message(gmail_limiter, message)
+                        # Process message with date_range
+                        processed_message = process_message(gmail_limiter, message, date_range)
                         message_log = {
                             "time": datetime.now().isoformat(),
                             "message_id": message['id'],
