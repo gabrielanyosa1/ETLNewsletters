@@ -55,9 +55,9 @@ def load_filter_senders(filename="filter_senders.json"):
 FILTER_SENDERS = load_filter_senders()
 
 # Rate limiting constants
-CALLS_PER_SECOND = 2  # More conservative limit
-CUTOFF_DATE = datetime(2024, 2, 5, tzinfo=timezone.utc)
-PAGE_SIZE = 50  # Smaller batch size
+CALLS_PER_SECOND = 30 # Increased rate limit
+CUTOFF_DATE = datetime(2024, 11, 13, tzinfo=timezone.utc)
+PAGE_SIZE = 70  # Larger batch size
 BATCH_DELAY = 1  # Delay between batches in seconds
 
 class EmailCleaner:
@@ -186,31 +186,43 @@ def construct_date_query(cutoff_date: datetime, date_range: Dict) -> str:
     """
     base_query = 'category:primary OR category:updates'
     current_time = datetime.now(timezone.utc)
-
-    # Format current time for query
-    current_str = current_time.strftime('%Y/%m/%d %H:%M:%S')  # Include time
-
-    # Determine search direction based on cutoff date and latest existing email
+    logger.debug(f"Current UTC time: {current_time}")
+    logger.debug(f"Cutoff date: {cutoff_date}")
+    
+    # Add buffer to current time
+    query_end_time = current_time + timedelta(days=1)
+    logger.debug(f"Query end time: {query_end_time}")
+    
     if date_range and date_range.get('latest'):
         latest_existing = datetime.fromisoformat(date_range['latest'].replace('Z', '+00:00'))
+        logger.debug(f"Latest existing email time: {latest_existing}")
+        
         if cutoff_date < latest_existing:
             # Search for older emails
             cutoff_str = cutoff_date.strftime('%Y/%m/%d')
-            earliest_str = latest_existing.strftime('%Y/%m/%d')  # Use latest_existing for the upper bound
+            earliest_str = latest_existing.strftime('%Y/%m/%d')
             date_query = f" after:{cutoff_str} before:{earliest_str}"
             logger.info(f"Searching for historical emails{date_query}")
             return f"{base_query}{date_query}"
         else:
-            # Search for newer emails
-            latest_str = latest_existing.strftime('%Y/%m/%d %H:%M:%S')  # Include time
-            date_query = f" after:{latest_str} before:{current_str}"
-            logger.info(f"Searching for new emails{date_query}")
+            # Search for newer emails - use simpler timestamp format
+            query_start_time = latest_existing - timedelta(hours=2) # Subtract 2 hours from latest_existing to account for potential timezone issues
+            # Format timestamps in RFC 3339 format
+            latest_str = query_start_time.strftime('%Y-%m-%d')
+            end_str = query_end_time.strftime('%Y-%m-%d')
+            # Create query without time components first
+            date_query = f" after:{latest_str}"
+            logger.debug(f"Query start time: {query_start_time}")
+            logger.debug(f"Query parameters - Start: {latest_str}, End: {end_str}")
+            logger.info(f"Searching for new emails with query{date_query}")
+            
             return f"{base_query}{date_query}"
     else:
         # No existing data, search from cutoff to now
-        cutoff_str = cutoff_date.strftime('%Y/%m/%d')
-        date_query = f" after:{cutoff_str} before:{current_str}"
-        logger.info(f"No existing date range. Searching from {cutoff_str} to {current_str}")
+        cutoff_str = cutoff_date.strftime('%Y-%m-%d')
+        end_str = query_end_time.strftime('%Y-%m-%d')
+        date_query = f" after:{cutoff_str}"
+        logger.info(f"No existing date range. Searching from {cutoff_str}")
         return f"{base_query}{date_query}"
     
 def safe_base64_decode(data):
