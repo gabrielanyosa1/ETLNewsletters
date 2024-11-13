@@ -59,6 +59,13 @@ class BackgroundProcessor:
         self.backup_dir = Path('backups')
         self.backup_dir.mkdir(exist_ok=True)
         
+        # Add persistent count tracking
+        self._initial_count = 0
+        self._last_known_count = 0
+        self._total_processed = 0
+        self._final_verification_count = 0  # New tracking variable
+
+
         # Email configuration from .env
         self.smtp_config = {
             'server': 'smtp.gmail.com',
@@ -149,19 +156,25 @@ class BackgroundProcessor:
                 
             try:
                 # Initialize database and collection
-                if not mongo_loader.initialize_database():  # Check the return value
+                if not mongo_loader.initialize_database():
                     raise Exception("Failed to initialize database")
                 
-                # Get initial count
-                initial_count = mongo_loader.collection.count_documents({})
-                logger.info(f"Starting processing with {initial_count} existing documents")
+                # Store initial count and get collection stats
+                self._initial_count = mongo_loader.collection.count_documents({})
+                self._last_known_count = self._initial_count
+                self._total_processed = 0  # Reset at start
+                
+                collection_stats = mongo_loader.get_collection_stats()
+                
+                logger.info(f"Starting processing with {self._initial_count} existing documents")
+                if collection_stats and 'date_range' in collection_stats:
+                    logger.info(f"Date range: {collection_stats['date_range']['earliest']} to {collection_stats['date_range']['latest']}")
                 logger.info(f"Processing emails from {CUTOFF_DATE.isoformat()}")
                 
-                # Create progress bar
-                with tqdm(desc="Processing emails", unit="email") as pbar:
-                    last_count = initial_count
+                # Create progress bar with initial count
+                with tqdm(desc="Processing emails", unit="email", initial=self._initial_count) as pbar:
                     last_notification_time = datetime.now()
-                    NOTIFICATION_INTERVAL = timedelta(minutes=5) # 5 minutes; for testing
+                    NOTIFICATION_INTERVAL = timedelta(minutes=5)
                     
                     try:
                         # Start Gmail extraction
@@ -172,10 +185,9 @@ class BackgroundProcessor:
                         gmail_thread.start()
                         
                         while self.running and gmail_thread.is_alive():
-                            # Check for new emails in both MongoDB and JSON
-                            current_count = mongo_loader.collection.count_documents({})
+                            # Get counts from both MongoDB and JSON
+                            current_mongo_count = mongo_loader.collection.count_documents({})
 
-                            # Also check for JSON file for new entries
                             try:
                                 with open('filtered_emails.json', 'r') as f:
                                     json_data = json.load(f)
@@ -183,17 +195,24 @@ class BackgroundProcessor:
                             except (FileNotFoundError, json.JSONDecodeError):
                                 json_count = 0
                             
-                            # Use the larger of the two counts 
-                            actual_count = max(current_count, json_count)
-                            new_processed = current_count - last_count
-                            
-                            if new_processed > 0:
-                                pbar.update(new_processed)
-                                pbar.set_description(f"Processed {new_processed} new emails")
-                                last_count = current_count
-                                self.state.total_processed += new_processed
-                                logger.info(f"Processed {new_processed} new emails. Total: {self.state.total_processed}")
-
+                            # Use the larger count and calculate progress
+                            current_count = max(current_mongo_count, json_count)
+                            if current_count > self._last_known_count:
+                                new_processed = current_count - self._last_known_count
+                                self._total_processed += new_processed  # Accumulate new processed count
+                                
+                                # Update progress bar
+                                pbar.n = current_count
+                                pbar.set_description(f"Processed {self._total_processed} total emails")
+                                pbar.refresh()
+                                
+                                self._last_known_count = current_count
+                                self.state.total_processed = self._total_processed
+                                
+                                logger.info(f"Progress update - Initial: {self._initial_count}, "
+                                        f"Current: {current_count}, "
+                                        f"New this iteration: {new_processed}, "
+                                        f"Total processed: {self._total_processed}")
                                 
                                 # Check if it's time for a notification
                                 current_time = datetime.now()
@@ -221,25 +240,47 @@ class BackgroundProcessor:
                         # Wait for Gmail thread to complete
                         gmail_thread.join()
                         
+                        # Final verification and counts
+                        final_count = mongo_loader.collection.count_documents({})
+                        self._final_verification_count = final_count
+                        actual_total_processed = final_count - self._initial_count
+                        
+                        # Ensure counts match
+                        if actual_total_processed != self._total_processed:
+                            logger.warning(f"Count mismatch detected - Tracked: {self._total_processed}, "
+                                        f"Actual: {actual_total_processed}. Using actual count.")
+                            self._total_processed = actual_total_processed
+                            self.state.total_processed = actual_total_processed
+                        
+                        # Update final progress bar state
+                        pbar.n = final_count
+                        pbar.set_description(f"Completed: {self._total_processed} emails processed")
+                        pbar.refresh()
+                        
                         # Final verification
                         verification_result = self.verify_processing()
                         if verification_result:
                             self.state.status = "completed"
-                            logger.info("Processing completed successfully")
-                            # Send final success notification
+                            logger.info(f"Processing completed successfully. "
+                                    f"Initial: {self._initial_count}, "
+                                    f"Final: {final_count}, "
+                                    f"Total processed: {self._total_processed}")
+                            
                             final_stats = {
-                                'total_processed': self.state.total_processed,
+                                'total_processed': final_count - self._initial_count, 
+                                'initial_count': self._initial_count,
+                                'final_count': final_count,
                                 'last_email_date': self.state.last_email_date,
-                                'processing_time': str(datetime.now() - datetime.fromisoformat(self.state.start_time)),
-                                'final_count': actual_count - initial_count
+                                'processing_time': str(datetime.now() - datetime.fromisoformat(self.state.start_time))
                             }
 
                             success_message = f"""
                             Processing completed successfully!
 
                             Final Statistics:
-                            - Total emails processed: {final_stats['final_count']}
-                            - Total collection size: {actual_count}
+                            - Initial collection size: {final_stats['initial_count']}
+                            - Final collection size: {final_stats['final_count']}
+                            - Total new emails processed: {final_stats['total_processed']}
                             - Latest email date: {final_stats['last_email_date']}
                             - Total processing time: {final_stats['processing_time']}
 
@@ -247,29 +288,28 @@ class BackgroundProcessor:
                             """
 
                             self.send_notification(
-                                "Gmail Processing Completed Successfully",
+                                f"Gmail Processing Completed - {final_stats['total_processed']} Emails Processed",
                                 success_message
                             )
-
                         else:
-                                logger.warning("Final verification shows discrepancies but data was persisted")
-                                self.state.status = "completed_with_warnings"
+                            logger.warning("Final verification shows discrepancies but data was persisted")
+                            self.state.status = "completed_with_warnings"
+                            
+                            # Send warning notification
+                            self.send_notification(
+                                "Gmail Processing Completed with Warnings",
+                                f"""
+                                Processing completed but verification shows some discrepancies.
+                                The data has been persisted but may need manual verification.
                                 
-                                # Send warning notification
-                                self.send_notification(
-                                    "Gmail Processing Completed with Warnings",
-                                    f"""
-                                    Processing completed but verification shows some discrepancies.
-                                    The data has been persisted but may need manual verification.
-                                    
-                                    Final State:
-                                    - Total processed: {self.state.total_processed}
-                                    - Latest email date: {self.state.last_email_date}
-                                    - Start time: {self.state.start_time}
-                                    
-                                    Please check the logs for more details.
-                                    """
-                                )
+                                Final State:
+                                - Total processed: {self.state.total_processed}
+                                - Latest email date: {self.state.last_email_date}
+                                - Start time: {self.state.start_time}
+                                
+                                Please check the logs for more details.
+                                """
+                            )
                             
                     except Exception as e:
                         self.state.status = "error"
@@ -346,10 +386,13 @@ class BackgroundProcessor:
             return False
             
     def save_checkpoint(self):
-        """Save processing checkpoint."""
+        """Save processing checkpoint with accurate counts."""
         try:
             checkpoint_data = {
-                'total_processed': self.state.total_processed,
+                'initial_count': self._initial_count,
+                'last_known_count': self._last_known_count,
+                'total_processed': self._total_processed,
+                'final_verification_count': self._final_verification_count,
                 'current_batch': self.state.current_batch,
                 'last_email_date': self.state.last_email_date,
                 'last_backup_time': self.state.last_backup_time,
@@ -365,27 +408,33 @@ class BackgroundProcessor:
             logger.error(f"Failed to save checkpoint: {e}")
             
     def load_checkpoint(self) -> bool:
-        """Load processing checkpoint if it exists."""
+        """Load processing checkpoint with count reset."""
         try:
             if self.checkpoint_path.exists():
                 with open(self.checkpoint_path, 'r') as f:
                     checkpoint_data = json.load(f)
                     
-                self.state.total_processed = checkpoint_data.get('total_processed', 0)
-                self.state.current_batch = checkpoint_data.get('current_batch', 0)
+                # Only load status and time-related fields
                 self.state.last_email_date = checkpoint_data.get('last_email_date')
                 self.state.last_backup_time = checkpoint_data.get('last_backup_time')
                 self.state.start_time = checkpoint_data.get('start_time')
                 self.state.status = checkpoint_data.get('status', 'resumed')
                 
-                logger.info(f"Resumed from checkpoint: {self.state.total_processed} items processed")
+                # Reset counters for new run
+                self._initial_count = 0
+                self._last_known_count = 0
+                self._total_processed = 0
+                self._final_verification_count = 0
+                self.state.total_processed = 0
+                
+                logger.info("Checkpoint loaded - counters reset for new run")
                 return True
         except Exception as e:
             logger.error(f"Failed to load checkpoint: {e}")
         return False
         
     def send_progress_notification(self):
-        """Send progress update notification with improved details."""
+        """Send progress update notification with accurate counts."""
         try:
             # Get current MongoDB count
             mongo_loader = MongoDBLoader()
@@ -393,16 +442,17 @@ class BackgroundProcessor:
                 current_count = mongo_loader.collection.count_documents({})
                 mongo_loader.close()
             else:
-                current_count = 0
+                current_count = self._last_known_count
                 
             processing_time = datetime.now() - datetime.fromisoformat(self.state.start_time)
-            processing_time_str = str(processing_time).split('.')[0]  # Remove microseconds
+            processing_time_str = str(processing_time).split('.')[0]
             
-            subject = f"Gmail Processing Update: {self.state.total_processed} new emails processed"
+            subject = f"Gmail Processing Update: {self._total_processed} Emails Processed"
             body = f"""
             Processing Status Update:
-            - New emails processed: {self.state.total_processed}
+            - Initial collection size: {self._initial_count}
             - Current collection size: {current_count}
+            - New emails processed: {self._total_processed}
             - Latest email date: {self.state.last_email_date}
             - Processing time: {processing_time_str}
             - Current status: {self.state.status}
@@ -410,6 +460,8 @@ class BackgroundProcessor:
             
             Processing is ongoing...
             """
+            
+            logger.info(f"Sending progress notification - Processed: {self._total_processed}")
             self.send_notification(subject, body)
             
         except Exception as e:
@@ -469,12 +521,21 @@ class BackgroundProcessor:
         self.running = False
         
     def cleanup(self):
-        """Cleanup resources."""
+        """Cleanup resources and reset checkpoint."""
         if hasattr(self, 'power_handler'):
             self.power_handler.allow_sleep()
         if self.running:
             self.running = False
             self.create_backup(force=True)
+            
+            # Reset or remove checkpoint
+            try:
+                if self.checkpoint_path.exists():
+                    os.remove(self.checkpoint_path)
+                    logger.info("Checkpoint file removed during cleanup")
+            except Exception as e:
+                logger.error(f"Error removing checkpoint file: {e}")
+                
             logger.info("Cleanup completed")
 
 class MacOSPowerAssertionHandler:
