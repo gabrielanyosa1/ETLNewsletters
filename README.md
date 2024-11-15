@@ -123,6 +123,18 @@ This project (Phase 1) is designed to develop a comprehensive email processing a
 ├── verify_state.py             # Data consistency verification
 ├── verify_mongo_data.py        # MongoDB data quality analysis
 ├── mongo_loader.py             # MongoDB connection management
+├── run_analysis.py             # Grafana dashboard data analysis
+├── verify_grafana_setup.py     # Grafana integration verification
+├── verify_grafana_connection.py # Grafana connection testing
+├── verify_grafana_data_format.py # Data format validation for Grafana
+├── analysis/                   # Analysis modules
+│   ├── __init__.py
+│   ├── config/                 # Configuration management
+│   │   └── grafana_config.py   # Grafana configuration
+│   └── eda/                    # Exploratory Data Analysis
+│       ├── __init__.py
+│       ├── subject_analyzer.py # Email subject analysis
+│       └── grafana_publisher.py # Grafana dashboard management
 ├── .env                        # Environment configuration
 ├── credentials.json            # Gmail API credentials
 ├── README.md                   # Project documentation
@@ -146,6 +158,15 @@ This project (Phase 1) is designed to develop a comprehensive email processing a
 - **`verify_mongo_data.py`**: Analyzes MongoDB data quality and provides statistics.
 
 - **`mongo_loader.py`**: Manages MongoDB connections, data loading, and indexing.
+
+- **`run_analysis.py`**: Manages data analysis and Grafana dashboard creation for email insights.
+
+- **`analysis/eda/subject_analyzer.py`**: Analyzes email subjects for trends and categories.
+
+- **`analysis/eda/grafana_publisher.py`**: Handles Grafana dashboard creation and updates.
+
+- **`analysis/config/grafana_config.py`**: Manages Grafana Cloud configuration.
+
 
 ---
 
@@ -179,6 +200,13 @@ This project (Phase 1) is designed to develop a comprehensive email processing a
    - **Error Handling**: Comprehensive error capture
    - **Logging**: Detailed activity logging
 
+### 5. **Data Visualization with Grafana**
+
+   - **Real-time Dashboard**: Visualizes email analysis in real-time
+   - **Category Analysis**: Shows distribution of email categories
+   - **Theme Tracking**: Displays most common newsletter themes
+   - **Time Series Analysis**: Tracks category trends over time
+
 ---
 
 ## Configuration
@@ -207,6 +235,32 @@ class BackgroundProcessor:
 - Batch Size: 50 emails
 - Automatic retries with exponential backoff
 
+### Grafana Configuration
+
+```python
+# In .env file
+GRAFANA_INSTANCE_URL=your_grafana_cloud_url
+GRAFANA_SA_TOKEN=your_service_account_token
+GRAFANA_ORG_ID=your_org_id  # Optional
+GRAFANA_DASHBOARD_FOLDER=Email Analysis  # Optional
+```
+
+Required environment variables:
+- GRAFANA_INSTANCE_URL
+- GRAFANA_SA_TOKEN
+
+### Data Visualization
+
+The Grafana dashboard includes:
+1. Time Series Graph: Newsletter Categories Over Time
+2. Pie Chart: Newsletter Category Distribution
+3. Bar Gauge: Most Common Newsletter Themes
+
+Known Issues:
+- Dashboard data may change on refresh
+- Category distribution shows duplicate entries
+- Theme panel requires aggregation improvements
+
 ---
 
 ## Development Notes
@@ -226,6 +280,21 @@ class BackgroundProcessor:
 - Regular backup verification
 - Monitor system resources
 - Check logs for errors
+
+### Grafana Integration
+
+- Test Grafana setup:
+  ```bash
+  python verify_grafana_setup.py
+  ```
+- Verify data format:
+  ```bash
+  python verify_grafana_data_format.py
+  ```
+- Run analysis and create dashboard:
+  ```bash
+  python run_analysis.py
+  ```
 
 ---
 
