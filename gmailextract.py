@@ -56,7 +56,7 @@ FILTER_SENDERS = load_filter_senders()
 
 # Rate limiting constants
 CALLS_PER_SECOND = 30 # Increased rate limit
-CUTOFF_DATE = datetime(2024, 11, 4, tzinfo=timezone.utc)
+CUTOFF_DATE = datetime(2024, 11, 14, tzinfo=timezone.utc)
 PAGE_SIZE = 70  # Larger batch size
 BATCH_DELAY = 1  # Delay between batches in seconds
 
@@ -175,7 +175,7 @@ class GmailRateLimiter:
 
 def construct_date_query(cutoff_date: datetime, date_range: Dict) -> str:
     """
-    Construct Gmail query based on date ranges.
+    Construct Gmail query based on date ranges. If wanting to update, move the cutoff date to the current date, or past cutoff date+1.
 
     Args:
         cutoff_date: The earliest date to fetch emails from
@@ -206,7 +206,7 @@ def construct_date_query(cutoff_date: datetime, date_range: Dict) -> str:
             return f"{base_query}{date_query}"
         else:
             # Search for newer emails - use simpler timestamp format
-            query_start_time = latest_existing - timedelta(hours=2) # Subtract 2 hours from latest_existing to account for potential timezone issues
+            query_start_time = latest_existing + timedelta(hours=2)
             # Format timestamps in RFC 3339 format
             latest_str = query_start_time.strftime('%Y-%m-%d')
             end_str = query_end_time.strftime('%Y-%m-%d')
